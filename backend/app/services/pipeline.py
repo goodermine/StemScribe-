@@ -19,6 +19,7 @@ from app.services.beat_grid import beat_map_from_grid, estimate_beat_grid
 from app.services.chords import estimate_chords
 from app.services.classify import classify_stem, lane_for_stem, profile_for, unique_key
 from app.services.drum_transcribe import summarise_groove, transcribe_drums
+from app.services.engrave import engrave_to_html, engrave_to_pdf
 from app.services.key_detect import detect_key
 from app.services.melody_extract import extract_melody_events, pick_lead_stem
 from app.services.score_export import (
@@ -140,6 +141,13 @@ def run_analysis(job_id: str, job_dir: Path, saved: Sequence[Path], title: str) 
         origin_beat,
     )
 
+    engraved = _engrave_all(job_dir, title, key_info, tempo_info)
+    if not engraved:
+        warnings.append(
+            "Notation could not be engraved for viewing; the MusicXML files are still valid "
+            "and open in any notation program."
+        )
+
     chart = chart_builder.build_chart(
         title=title,
         tempo_info=tempo_info,
@@ -171,6 +179,7 @@ def run_analysis(job_id: str, job_dir: Path, saved: Sequence[Path], title: str) 
         },
         "sections": [{"name": s["name"], "start_bar": s["start_bar"] + 1, "end_bar": s["end_bar"] + 1} for s in sections],
         "chord_count": len(chords),
+        "engraved_pages": engraved,
         "parts": part_summaries,
         "warnings": warnings,
         "confidence_summary": {
@@ -360,6 +369,45 @@ def _write_scores(
 
     if midi_tracks:
         export_song_midi(midi_tracks, job_dir / "score" / "song.mid", bpm=bpm)
+
+
+def _engrave_all(job_dir: Path, title: str, key_info: dict, tempo_info: dict) -> dict[str, int]:
+    """Turn every MusicXML file into a page a musician can just open.
+
+    Handing someone a .musicxml means handing them a prerequisite. These are
+    browser pages that print straight to PDF, so the part is readable with
+    nothing installed.
+    """
+    subtitle = (
+        f"{key_info['key_name']} · {round(tempo_info['bpm'])} BPM · "
+        f"{tempo_info['time_signature_guess']}"
+    )
+    engraved: dict[str, int] = {}
+    for source in sorted(job_dir.rglob("*.musicxml")):
+        relative = source.relative_to(job_dir).as_posix()
+        label = _score_label(relative, title)
+        try:
+            pages = engrave_to_html(source, source.with_suffix(".html"), label, subtitle)
+            if pages:
+                engrave_to_pdf(source, source.with_suffix(".pdf"))
+        except Exception:
+            # One unreadable score should not cost the rest of the job.
+            pages = 0
+        engraved[relative] = pages
+    return engraved
+
+
+def _score_label(relative_path: str, title: str) -> str:
+    if relative_path.endswith("lead_sheet.musicxml"):
+        return f"{title} — lead sheet"
+    if relative_path.endswith("full_score.musicxml"):
+        return f"{title} — full score"
+    parts = relative_path.split("/")
+    if len(parts) >= 2 and parts[0] == "stems":
+        return f"{title} — {parts[1].replace('_', ' ')}"
+    if "lead_melody" in relative_path:
+        return f"{title} — lead melody"
+    return title
 
 
 def _write_part(part, out_path: Path, title: str | None = None, subtitle: str | None = None) -> None:

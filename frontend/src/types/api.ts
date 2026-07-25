@@ -35,5 +35,9 @@ export type PreviewManifest = {
   available_downloads: string[]
   song_midi_path: string
   player_sheet_html: string
+  engraved_html: string[]
+  engraved_pdf: string[]
+  lead_sheet_readable: string
+  full_score_readable: string
   summary: Record<string, string | number>
 }

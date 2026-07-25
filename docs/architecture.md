@@ -24,6 +24,8 @@ before it.
    grid, in beat space.
 8. **Export** (`services/score_export.py`, `services/chart.py`) — notation,
    MIDI and the player sheet.
+9. **Engrave** (`services/engrave.py`) — render every score to pages a browser
+   can open, so reading a part does not require owning notation software.
 
 `services/pipeline.py` runs the sequence. `routes/jobs.py` is a thin HTTP layer
 over it, and `app/cli.py` a thin command-line one.
@@ -68,10 +70,19 @@ thicket of thirty-second rests.
 **Pitched parts are quantized to eighths, drums to sixteenths.** Below an
 eighth, a detected vocal position is tracker jitter rather than rhythm.
 
+**Scores are engraved, not just exported.** MusicXML is an interchange format,
+not a document: handing someone one means handing them a prerequisite. Verovio
+engraves each score to SVG, wrapped in a self-contained HTML page that prints to
+PDF from any browser. Verovio is a pure wheel with no system dependencies, so
+this costs nothing at install time. Direct PDF output additionally needs
+cairosvg and pypdf, which pull in a system cairo library, so that path is
+optional and degrades to HTML.
+
 ## Dependencies
 
 Backend: fastapi, uvicorn, pydantic, librosa, numpy, scipy, soundfile, mido,
-music21. Frontend: react, typescript, vite, opensheetmusicdisplay.
+music21, verovio. Optional, for direct PDF output: cairosvg, pypdf.
+Frontend: react, typescript, vite, opensheetmusicdisplay.
 
 MIDI is written with mido rather than pretty_midi — pretty_midi's `setup.py`
 fails to build against modern setuptools, which broke installation outright.

@@ -46,13 +46,16 @@ Accepted audio: `.wav`, `.flac`, `.aiff`, `.aif`, `.ogg`, `.mp3`, `.m4a`.
 # the printable sheet
 curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/player_sheet.html
 
-# notation and MIDI
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/score/lead_sheet.musicxml
+# engraved notation — opens in a browser, no notation software needed
+curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/score/lead_sheet.html
+curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/score/lead_sheet.pdf
+
+# the same notation as MusicXML, for importing elsewhere
 curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/score/full_score.musicxml
 curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/score/song.mid
 
 # one part
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/stems/bass/part.musicxml
+curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/stems/bass/part.html
 ```
 
 `GET /jobs/{id}/downloads` lists everything a job produced, so there is no need
@@ -72,14 +75,14 @@ jobs/<job_id>/
   player_sheet.html    the printable sheet
   player_sheet.md      the same, as Markdown
   score/
-    lead_sheet.musicxml
-    full_score.musicxml
+    lead_sheet.musicxml   lead_sheet.html   lead_sheet.pdf
+    full_score.musicxml   full_score.html   full_score.pdf
     song.mid
   lead_melody/
     lead_melody.musicxml  lead_melody.mid  lead_melody_notes.json
   stems/<part>/
     notes.json | rhythm.json
-    part.musicxml  part.mid  metadata.json
+    part.musicxml  part.html  part.pdf  part.mid  metadata.json
   merged/preview_manifest.json
 ```
 
@@ -90,7 +93,11 @@ finishes — stems are large, and the finished job only needs the symbolic outpu
 
 `analysis.json`: `job_id`, `title`, `input_stems`, `detected_stem_types`,
 `duration_sec`, `key`, `tempo`, `sections`, `chord_count`, `parts`, `warnings`,
-`confidence_summary`, `created_at`.
+`confidence_summary`, `engraved_pages`, `created_at`.
+
+The preview manifest carries `lead_sheet_readable` and `full_score_readable`,
+which point at the engraved page — PDF where it exists, HTML otherwise — so a
+client can link to something openable without knowing which was produced.
 
 Note events carry both wall-clock and musical positions: `start_sec`,
 `end_sec`, `duration_sec`, `start_beat`, `end_beat`, `duration_beats`,

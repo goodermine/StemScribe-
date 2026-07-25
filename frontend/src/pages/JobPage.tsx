@@ -63,11 +63,19 @@ export function JobPage({ jobId, onReset }: { jobId: string; onReset: () => void
           {manifest?.song_midi_path && (
             <a href={fileUrl(jobId, manifest.song_midi_path)}>Download MIDI</a>
           )}
-          {manifest?.lead_sheet_path && (
-            <a href={fileUrl(jobId, manifest.lead_sheet_path)}>Download lead sheet (MusicXML)</a>
+          {/* The engraved pages open in a browser; MusicXML needs an app. */}
+          {manifest?.lead_sheet_readable && (
+            <a href={fileUrl(jobId, manifest.lead_sheet_readable)} target="_blank" rel="noreferrer">
+              Lead sheet
+            </a>
           )}
-          {manifest?.full_score_path && (
-            <a href={fileUrl(jobId, manifest.full_score_path)}>Download full score (MusicXML)</a>
+          {manifest?.full_score_readable && (
+            <a href={fileUrl(jobId, manifest.full_score_readable)} target="_blank" rel="noreferrer">
+              Full score
+            </a>
+          )}
+          {manifest?.lead_sheet_path && (
+            <a href={fileUrl(jobId, manifest.lead_sheet_path)}>MusicXML</a>
           )}
         </div>
       )}

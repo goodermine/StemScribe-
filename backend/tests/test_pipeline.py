@@ -48,6 +48,27 @@ def test_every_promised_output_exists(job) -> None:
         assert path.stat().st_size > 0, f"empty {relative}"
 
 
+def test_notation_is_engraved_for_reading_without_an_app(job) -> None:
+    """MusicXML needs software to open; these pages need only a browser."""
+    job_dir, analysis = job
+    for relative in ["score/lead_sheet.html", "score/full_score.html"]:
+        page = job_dir / relative
+        assert page.exists(), f"missing {relative}"
+        assert "<svg" in page.read_text()
+
+    assert analysis["engraved_pages"], "nothing was engraved"
+    assert all(pages > 0 for pages in analysis["engraved_pages"].values())
+
+
+def test_manifest_offers_a_readable_lead_sheet(job) -> None:
+    job_dir, _ = job
+    manifest = json.loads((job_dir / "merged" / "preview_manifest.json").read_text())
+    readable = manifest["lead_sheet_readable"]
+    assert readable, "no readable lead sheet offered"
+    assert readable.endswith((".html", ".pdf"))
+    assert (job_dir / readable).exists()
+
+
 def test_each_stem_gets_its_own_output_directory(job) -> None:
     job_dir, _ = job
     stems = {p.name for p in (job_dir / "stems").iterdir()}

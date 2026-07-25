@@ -15,7 +15,7 @@ from app.services.storage import read_json, resolve_within, write_json
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
-DOWNLOADABLE_SUFFIXES = {".mid", ".musicxml", ".json", ".html", ".md"}
+DOWNLOADABLE_SUFFIXES = {".mid", ".musicxml", ".json", ".html", ".md", ".pdf"}
 
 
 def _status_path(job_dir: Path) -> Path:

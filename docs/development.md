@@ -9,6 +9,17 @@ cd ../frontend && npm install
 
 Every dependency ships wheels for Python 3.10–3.13, so no compiler is needed.
 
+Scores are engraved to browser-readable HTML out of the box. For PDF output as
+well:
+
+```bash
+pip install cairosvg pypdf
+```
+
+That needs a system cairo library, which is why it is optional rather than in
+`requirements.txt`. Without it, every score still gets an HTML page that prints
+to PDF from a browser.
+
 ## Running a job without the server
 
 ```bash

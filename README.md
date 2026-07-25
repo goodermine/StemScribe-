@@ -9,14 +9,25 @@ notation for anyone who reads it.
 
 ## What comes out
 
+Nothing here needs notation software. Every score is engraved to an HTML page
+that opens in any browser and prints straight to PDF — and to a PDF directly,
+where the optional PDF dependencies are installed.
+
 | File | What it's for |
 | --- | --- |
 | `player_sheet.html` | **The thing to hand a musician.** Key, tempo, structure, bar-by-bar chord chart, drum groove. Prints to A4. |
-| `score/lead_sheet.musicxml` | Melody staff with chord symbols and section marks — the singer's page. |
-| `score/full_score.musicxml` | Every part on its own staff, bracketed together. |
+| `score/lead_sheet.html` / `.pdf` | Engraved notation: melody staff with chord symbols and section marks — the singer's page. |
+| `score/full_score.html` / `.pdf` | Every part on its own staff, bracketed together. |
+| `stems/<part>/part.html` / `.pdf` | One part on its own, for the player of that instrument. |
 | `score/song.mid` | The whole arrangement as multi-track MIDI. |
-| `stems/<part>/part.musicxml` | One part on its own, for the player of that instrument. |
+| `*.musicxml` | The same notation as data, for importing into a notation program. |
 | `chart.json`, `chords.json`, `sections.json`, `key.json`, `tempo.json` | The analysis as data. |
+
+Every `.musicxml` has an `.html` twin next to it. Open the HTML; keep the
+MusicXML for when you want to edit the notation somewhere else. Free programs
+that import MusicXML include MuseScore Studio (musescore.org — the desktop app
+is GPL, unlike the musescore.com subscription), Frescobaldi and Denemo, and the
+browser editors Flat.io and Noteflight have free tiers.
 
 ## Quick run
 
