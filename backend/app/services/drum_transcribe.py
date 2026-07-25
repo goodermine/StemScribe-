@@ -47,6 +47,12 @@ BANDS = {
 # of the hit, short enough not to run into the next one.
 WINDOW_SEC = 0.06
 
+# Drums are analysed at full bandwidth rather than the pipeline's default rate.
+# Telling a hi-hat from a snare depends on energy above 8 kHz, and at 22050 Hz
+# the Nyquist limit is 11 kHz, so most of that band does not survive resampling
+# and cymbals end up claiming hits the snare played.
+DRUM_SAMPLE_RATE = 44100
+
 
 def transcribe_drums(
     stem_name: str,
@@ -56,7 +62,7 @@ def transcribe_drums(
 ) -> List[dict]:
     beat_map = _as_beat_map(beat_reference)
     division = division or settings.quantization_division
-    y, sr = load_mono(stem_path)
+    y, sr = load_mono(stem_path, DRUM_SAMPLE_RATE)
     if is_silent(y):
         return []
 
@@ -121,10 +127,11 @@ def classify_hit(segment: np.ndarray, sr: int) -> tuple[str, float]:
         "hihat": share["very_high"] * 1.8 + share["high"] * 0.6 - share["low"] * 1.5,
         "cymbal": share["very_high"] * 1.2 + share["high"] * 1.0 - share["low"] * 1.0,
     }
-    # A cymbal rings much longer than a hi-hat; without a decay measurement the
-    # two are hard to separate, so bias toward the hi-hat, which is far more
-    # common in a groove.
-    scores["cymbal"] -= 0.15
+    # A cymbal rings much longer than a hi-hat, but measuring decay means
+    # looking past the next hit. Without that, the two are near-identical in
+    # this feature set, so the tie goes to the hi-hat: a groove is built from
+    # hats, and crashes are punctuation.
+    scores["cymbal"] -= 0.35
     if centroid < 200.0:
         scores["kick"] += 0.3
 
@@ -155,19 +162,24 @@ def summarise_groove(hits: List[dict], beat_map: BeatMap) -> dict:
     if not hits:
         return {"pattern": "unknown", "kick_beats": [], "snare_beats": [], "hits_per_bar": 0.0}
 
-    def positions(instrument: str) -> list[float]:
-        slots = sorted(
-            {
-                round((h["start_beat"] - beat_map.downbeat_index) % beat_map.beats_per_bar + 1, 2)
-                for h in hits
-                if h["instrument"] == instrument
-            }
-        )
-        return slots
+    bars = max(len({h["bar_index"] for h in hits}), 1)
+
+    def positions(instrument: str, min_share: float = 0.2) -> list[float]:
+        """Positions the instrument lands on often enough to be the groove.
+
+        Listing every position that ever occurs describes the fills as much as
+        the pattern, and over a whole song that is every sixteenth.
+        """
+        counts: dict[float, int] = {}
+        for hit in hits:
+            if hit["instrument"] != instrument:
+                continue
+            slot = round(float(hit["beat_in_bar"]), 2)
+            counts[slot] = counts.get(slot, 0) + 1
+        return sorted(slot for slot, n in counts.items() if n / bars >= min_share)
 
     kick = positions("kick")
     snare = positions("snare")
-    bars = max(beat_map.bar_count(), 1)
 
     backbeat = {2.0, 4.0}
     pattern = "backbeat" if backbeat.issubset(set(snare)) else "varied"

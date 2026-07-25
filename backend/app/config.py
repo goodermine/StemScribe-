@@ -8,9 +8,15 @@ class Settings(BaseModel):
     jobs_root: Path = Field(default=Path("jobs"))
     sample_rate: int = 22050
 
-    # Notes are quantized in beat space rather than seconds, so this is a
-    # musical subdivision: 4 means sixteenth notes in 4/4.
+    # Notes are quantized in beat space rather than seconds, so these are
+    # musical subdivisions: 4 means sixteenth notes in 4/4, 2 means eighths.
+    #
+    # Drums genuinely play sixteenths and their onsets are sharp enough to
+    # place there. Sung and played pitches are not: below an eighth note the
+    # detected position is pitch-tracker jitter rather than rhythm, and writing
+    # it down turns a singable line into unreadable syncopation.
     quantization_division: int = 4
+    melodic_division: int = 2
     hop_length: int = 512
 
     # Frames whose normalised salience falls below this are treated as silence

@@ -38,6 +38,13 @@ BEAT_UNIT_QUARTERS = {"4/4": 1.0, "3/4": 1.0, "2/4": 1.0, "6/8": 0.5}
 # finer cannot be engraved, and music21 rejects the file outright.
 NOTATION_GRID = 0.25
 
+# Gaps up to this many beats between one note and the next are closed by
+# holding the earlier note. Pitch trackers release a note early and drop out
+# through breaths and consonants, and every one of those silences would
+# otherwise be engraved as a rest — turning a singable line into a thicket of
+# thirty-second rests that no one can read.
+GAP_FILL_BEATS = 1.0
+
 
 def beat_unit(time_signature: str) -> float:
     return BEAT_UNIT_QUARTERS.get(time_signature, 1.0)
@@ -67,7 +74,10 @@ def score_offset(beat: float, origin_beat: float, quarters_per_beat: float) -> f
 
 
 def _events_from_notes(
-    notes: Sequence[dict], quarters_per_beat: float, origin_beat: float = 0.0
+    notes: Sequence[dict],
+    quarters_per_beat: float,
+    origin_beat: float = 0.0,
+    gap_fill_beats: float = GAP_FILL_BEATS,
 ) -> list[dict]:
     """Collapse note events into a single readable voice.
 
@@ -86,9 +96,12 @@ def _events_from_notes(
 
     events = sorted(grouped.values(), key=lambda e: e["start"])
     for current, following in zip(events, events[1:]):
-        overlap_end = current["start"] + current["duration"]
-        if overlap_end > following["start"]:
-            current["duration"] = max(following["start"] - current["start"], 0.0)
+        span_to_next = following["start"] - current["start"]
+        overhang = current["duration"] - span_to_next
+        if overhang > 0 or -overhang <= gap_fill_beats:
+            # Either the note ran into the next one and has to be cut, or it
+            # stopped just short and is held until the next one begins.
+            current["duration"] = max(span_to_next, 0.0)
 
     out = []
     for event in events:
@@ -113,6 +126,7 @@ def build_pitched_part(
     fifths: int = 0,
     part_name: str | None = None,
     origin_beat: float = 0.0,
+    gap_fill_beats: float = GAP_FILL_BEATS,
 ) -> stream.Part:
     profile = profile_for(role)
     part = stream.Part()
@@ -126,7 +140,7 @@ def build_pitched_part(
     part.insert(0, tempo.MetronomeMark(number=round(bpm)))
 
     quarters_per_beat = beat_unit(time_signature)
-    for event in _events_from_notes(notes, quarters_per_beat, origin_beat):
+    for event in _events_from_notes(notes, quarters_per_beat, origin_beat, gap_fill_beats):
         element = (
             chord.Chord(event["midis"])
             if len(event["midis"]) > 1

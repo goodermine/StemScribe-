@@ -83,13 +83,21 @@ def run_analysis(job_id: str, job_dir: Path, saved: Sequence[Path], title: str) 
 
     sections = analyse_sections(stems_by_role, beat_map)
     write_json(job_dir / "sections.json", sections)
+    if sections:
+        warnings.append(
+            "Section boundaries are detected from the audio and land on bar lines, but the "
+            "names (verse, chorus, bridge) are inferred from loudness and whether vocals are "
+            "present — treat them as a guide, not a transcript of the arrangement."
+        )
 
     lead_choice = pick_lead_stem(stems_by_role)
     lead_notes: list[dict] = []
     lead_role = "vocals"
     if lead_choice:
         lead_role, lead_path = lead_choice
-        lead_notes = extract_melody_events(lead_role, lead_path, beat_map)
+        lead_notes = extract_melody_events(
+            lead_role, lead_path, beat_map, settings.melodic_division
+        )
         lead_dir = job_dir / "lead_melody"
         write_json(lead_dir / "lead_melody_notes.json", lead_notes)
         export_midi(
@@ -237,10 +245,15 @@ def _transcribe_stems(
                     export_midi(
                         hits, out_dir / "part.mid", is_drums=True, bpm=tempo_info["bpm"], name=out_key
                     )
-                    _write_part(part, out_dir / "part.musicxml")
+                    _write_part(
+                        part,
+                        out_dir / "part.musicxml",
+                        title=profile.display_name,
+                        subtitle=f"{round(tempo_info['bpm'])} BPM · {tempo_info['time_signature_guess']}",
+                    )
                 summary = _summarise(out_key, profile.display_name, hits, lane)
             else:
-                notes = transcribe_pitched_stem(role, path, beat_map)
+                notes = transcribe_pitched_stem(role, path, beat_map, settings.melodic_division)
                 transcripts.setdefault(role, []).extend(notes)
                 write_json(out_dir / "notes.json", notes)
                 if notes:
@@ -286,7 +299,11 @@ def _transcribe_stems(
                     "source_filename": path.name,
                     "transcription_method": _method_for(role, lane),
                     "quantization": {
-                        "division": settings.quantization_division,
+                        "division": (
+                            settings.quantization_division
+                            if lane == "rhythm"
+                            else settings.melodic_division
+                        ),
                         "min_note_beats": settings.min_note_beats,
                     },
                     "confidence": summary["confidence"],
@@ -345,14 +362,16 @@ def _write_scores(
         export_song_midi(midi_tracks, job_dir / "score" / "song.mid", bpm=bpm)
 
 
-def _write_part(part, out_path: Path) -> None:
+def _write_part(part, out_path: Path, title: str | None = None, subtitle: str | None = None) -> None:
     from music21 import stream as m21stream
 
     from app.services.score_export import finalise, write_score
 
     score = m21stream.Score()
     score.insert(0, part)
-    write_score(finalise(score), out_path)
+    # Without a title music21 stamps the file "Music21 Fragment", which is what
+    # a player then sees at the top of their part.
+    write_score(finalise(score, title or "Part", subtitle), out_path)
 
 
 def _summarise(key: str, name: str, events: Sequence[dict], lane: str) -> dict:

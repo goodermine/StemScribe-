@@ -33,13 +33,12 @@ TEMPLATES: list[tuple[str, str, tuple[int, ...]]] = [
     ("dim", "dim", (0, 3, 6)),
 ]
 
-# Cost of changing chord between one beat and the next, on the same scale as
-# the cosine fit scores. Those differ by roughly 0.05 between neighbouring
-# chords and 0.15 at a real change, so the penalty has to sit between: high
-# enough to ignore passing notes, low enough that a genuine move to a chord
-# sharing two notes with the current one — C to Am — still wins. Anything
-# above about 0.3 holds C right through the Am bar.
-TRANSITION_PENALTY = 0.20
+# Cost of changing chord from one slot to the next, on the same scale as the
+# correlation scores below (-1 to 1). High enough that a vocal run or a cymbal
+# crash cannot pull the chord around, low enough that a real move to a chord
+# sharing two notes with the current one — C to Am — still wins. Past about
+# 0.4 genuine changes start being swallowed.
+TRANSITION_PENALTY = 0.30
 
 # Chords shorter than this get absorbed into their neighbours.
 MIN_CHORD_BEATS = 2.0
@@ -50,13 +49,13 @@ ROLE_WEIGHTS = {"guitar": 1.0, "keys": 1.0, "strings": 0.7, "brass": 0.6, "other
 
 
 def _template_vectors() -> tuple[list[str], list[str], np.ndarray]:
+    """Binary chord masks, one state per root and quality."""
     names, suffixes, vectors = [], [], []
     for quality, suffix, offsets in TEMPLATES:
         for root in range(12):
             vec = np.zeros(12, dtype=float)
             for offset in offsets:
                 vec[(root + offset) % 12] = 1.0
-            vec /= np.linalg.norm(vec)
             names.append(f"{root}:{quality}")
             suffixes.append(suffix)
             vectors.append(vec)
@@ -64,6 +63,30 @@ def _template_vectors() -> tuple[list[str], list[str], np.ndarray]:
 
 
 STATE_NAMES, STATE_SUFFIXES, STATE_VECTORS = _template_vectors()
+
+_CENTRED_TEMPLATES = STATE_VECTORS - STATE_VECTORS.mean(axis=1, keepdims=True)
+_TEMPLATE_NORMS = np.linalg.norm(_CENTRED_TEMPLATES, axis=1, keepdims=True)
+
+
+def score_templates(chroma: np.ndarray) -> np.ndarray:
+    """How well each chord explains each beat, independent of chord size.
+
+    Getting this scale-free matters more than it looks. Cosine against an
+    L2-normalised binary template rewards bigger chords for free: real chroma
+    from a mixed recording is smeared by harmonics and bleed, and against
+    flat-ish chroma an n-note template scores sqrt(n/12). That put a seventh
+    chord on 371 of 398 beats of this song. Contrasting mean energy inside the
+    chord against outside it overcorrects the other way, favouring two-note
+    power chords for the mirror-image reason.
+
+    Pearson correlation is neutral. The exact template scores 1.0, while both a
+    subset and a superset of the sounding notes score strictly less, so the
+    chord that wins is the one that was actually played.
+    """
+    centred = chroma - chroma.mean(axis=0, keepdims=True)
+    norms = np.linalg.norm(centred, axis=0, keepdims=True)
+    denominator = _TEMPLATE_NORMS * np.where(norms > 0, norms, 1.0)
+    return (_CENTRED_TEMPLATES @ centred) / denominator
 
 
 def harmonic_chroma(
@@ -102,6 +125,17 @@ def harmonic_chroma(
     return librosa.util.sync(accumulated, beat_frames, aggregate=np.median)
 
 
+def slot_size_for(beats_per_bar: int) -> int:
+    """How many beats one chord slot spans.
+
+    Chords change on bar lines and half-bar lines far more often than on
+    arbitrary beats, so deciding at that resolution both smooths the estimate
+    and puts the changes where a player expects to read them. Deciding per beat
+    lets every vocal run and cymbal crash pull the chord around.
+    """
+    return max(beats_per_bar // 2, 1) if beats_per_bar % 2 == 0 else beats_per_bar
+
+
 def estimate_chords(
     stems_by_role: dict[str, list[Path]],
     beat_map: BeatMap,
@@ -111,14 +145,28 @@ def estimate_chords(
     if chroma is None or chroma.shape[1] == 0:
         return []
 
-    norms = np.linalg.norm(chroma, axis=0, keepdims=True)
-    normalised = chroma / np.where(norms > 0, norms, 1.0)
-    # Scores: how well each chord template explains each beat.
-    scores = STATE_VECTORS @ normalised
+    slot_beats = slot_size_for(beat_map.beats_per_bar)
+    slotted, origin = _to_slots(chroma, beat_map.downbeat_index, slot_beats)
+    if slotted.shape[1] == 0:
+        return []
 
+    scores = score_templates(slotted)
     path = _viterbi(scores)
-    spans = _collapse(path, scores, beat_map)
+    spans = _collapse(path, scores, beat_map, slot_beats, origin)
     return _label(spans, key_info)
+
+
+def _to_slots(
+    chroma: np.ndarray, downbeat_index: int, slot_beats: int
+) -> tuple[np.ndarray, int]:
+    """Average beat-synchronous chroma into chord slots aligned to the downbeat."""
+    start = downbeat_index % slot_beats
+    usable = chroma[:, start:]
+    n_slots = usable.shape[1] // slot_beats
+    if n_slots == 0:
+        return chroma[:, :0], start
+    trimmed = usable[:, : n_slots * slot_beats]
+    return trimmed.reshape(12, n_slots, slot_beats).mean(axis=2), start
 
 
 def _viterbi(scores: np.ndarray) -> list[int]:
@@ -141,20 +189,27 @@ def _viterbi(scores: np.ndarray) -> list[int]:
     return path[::-1]
 
 
-def _collapse(path: list[int], scores: np.ndarray, beat_map: BeatMap) -> list[dict]:
-    """Turn a per-beat state sequence into chord spans, dropping flickers."""
+def _collapse(
+    path: list[int],
+    scores: np.ndarray,
+    beat_map: BeatMap,
+    slot_beats: int = 1,
+    origin: int = 0,
+) -> list[dict]:
+    """Turn a per-slot state sequence into chord spans, dropping flickers."""
     spans: list[dict] = []
-    for beat_index, state in enumerate(path):
+    for slot_index, state in enumerate(path):
+        start_beat = origin + slot_index * slot_beats
         if spans and spans[-1]["state"] == state:
-            spans[-1]["end_beat"] = beat_index + 1.0
-            spans[-1]["fit"].append(float(scores[state, beat_index]))
+            spans[-1]["end_beat"] = float(start_beat + slot_beats)
+            spans[-1]["fit"].append(float(scores[state, slot_index]))
         else:
             spans.append(
                 {
                     "state": state,
-                    "start_beat": float(beat_index),
-                    "end_beat": beat_index + 1.0,
-                    "fit": [float(scores[state, beat_index])],
+                    "start_beat": float(start_beat),
+                    "end_beat": float(start_beat + slot_beats),
+                    "fit": [float(scores[state, slot_index])],
                 }
             )
 

@@ -84,42 +84,58 @@ def section_progressions(sections: Sequence[dict], bar_chords: list[list[str]]) 
     return out
 
 
+# A slot has to appear in at least this share of bars to be part of the groove,
+# and this much to count as a core hit rather than an occasional one.
+GROOVE_OCCASIONAL = 0.20
+GROOVE_CORE = 0.60
+
+
 def groove_grid(drum_hits: Sequence[dict], beats_per_bar: int) -> dict:
-    """The bar pattern the drummer plays most often, as a readable grid."""
+    """The groove the drummer actually plays, as a readable grid.
+
+    Built from how often each instrument lands on each sixteenth, not from the
+    single most common bar. Real drumming varies every bar — ghost notes, open
+    hats, fills — so exact bar patterns almost never repeat, and picking the
+    modal one shows an arbitrary bar rather than the groove. Frequency across
+    all bars is what a drummer means by "the pattern".
+    """
+    slots = max(beats_per_bar, 1) * SLOTS_PER_BEAT
+    empty = {"available": False, "rows": [], "slots": slots, "bars": 0}
     if not drum_hits:
-        return {"available": False, "rows": [], "slots": 0, "coverage": 0.0, "pattern_bars": 0}
+        return empty
 
-    slots = beats_per_bar * SLOTS_PER_BEAT
-    by_bar: dict[int, set[tuple[str, int]]] = {}
+    per_instrument: dict[str, Counter] = {}
+    bars: set[int] = set()
     for hit in drum_hits:
-        bar = int(hit["bar_index"])
+        bars.add(int(hit["bar_index"]))
         slot = int(round((float(hit["beat_in_bar"]) - 1.0) * SLOTS_PER_BEAT)) % slots
-        by_bar.setdefault(bar, set()).add((hit["instrument"], slot))
+        per_instrument.setdefault(hit["instrument"], Counter())[slot] += 1
 
-    if not by_bar:
-        return {"available": False, "rows": [], "slots": slots, "coverage": 0.0, "pattern_bars": 0}
+    bar_count = max(len(bars), 1)
+    if not per_instrument:
+        return empty
 
-    signatures = Counter(frozenset(v) for v in by_bar.values())
-    pattern, count = signatures.most_common(1)[0]
-
-    instruments = ["hihat", "snare", "kick", "tom", "cymbal"]
-    present = [i for i in instruments if any(inst == i for inst, _ in pattern)]
+    order = ["hihat", "cymbal", "snare", "tom", "kick"]
     rows = []
-    for inst in present or ["kick", "snare"]:
-        cells = [False] * slots
-        for hit_inst, slot in pattern:
-            if hit_inst == inst and 0 <= slot < slots:
-                cells[slot] = True
-        rows.append({"instrument": inst, "cells": cells})
+    for instrument in order:
+        counts = per_instrument.get(instrument)
+        if not counts:
+            continue
+        cells = []
+        for slot in range(slots):
+            share = counts.get(slot, 0) / bar_count
+            cells.append("core" if share >= GROOVE_CORE else ("some" if share >= GROOVE_OCCASIONAL else ""))
+        if any(cells):
+            rows.append({"instrument": instrument, "cells": cells})
 
+    if not rows:
+        return empty
     return {
         "available": True,
         "rows": rows,
         "slots": slots,
         "beats_per_bar": beats_per_bar,
-        "coverage": round(count / max(len(by_bar), 1), 3),
-        "pattern_bars": count,
-        "total_bars": len(by_bar),
+        "bars": bar_count,
     }
 
 
@@ -161,9 +177,14 @@ def render_markdown(chart: dict) -> str:
         )
         lines.append(header)
         for row in groove["rows"]:
-            cells = "".join("x" if c else "-" for c in row["cells"])
+            cells = "".join({"core": "X", "some": "x"}.get(c, "-") for c in row["cells"])
             lines.append(f"{row['instrument']:<8}{cells}")
-        lines += ["```", "", f"Main pattern covers {int(groove['coverage'] * 100)}% of bars.", ""]
+        lines += [
+            "```",
+            "",
+            f"X = played in most bars, x = played in some. Averaged over {groove['bars']} bars.",
+            "",
+        ]
 
     if chart["parts"]:
         lines += ["## Parts", "", "| Part | Notes | Range | Confidence |", "| --- | --- | --- | --- |"]
@@ -220,7 +241,7 @@ def render_html(chart: dict) -> str:
             + escape(row["instrument"])
             + "</th>"
             + "".join(
-                f"<td class='cell {'hit' if c else ''} {'beat' if i % SLOTS_PER_BEAT == 0 else ''}'></td>"
+                f"<td class='cell {c} {'beat' if i % SLOTS_PER_BEAT == 0 else ''}'></td>"
                 for i, c in enumerate(row["cells"])
             )
             + "</tr>"
@@ -228,7 +249,7 @@ def render_html(chart: dict) -> str:
         )
         groove_html = (
             "<section class='block'><h3>Groove<small>"
-            f"main pattern, {int(groove['coverage'] * 100)}% of bars</small></h3>"
+            f"solid = most bars, outline = some · averaged over {groove['bars']} bars</small></h3>"
             f"<table class='groove'><tr><th></th>{beat_header}</tr>{rows}</table></section>"
         )
 
@@ -303,7 +324,8 @@ table.groove th { text-align:right; padding-right:10px; color:var(--dim); font-w
                   font-size:12px; }
 table.groove td.cell { width:17px; height:17px; border:1px solid #e8e8e8; }
 table.groove td.cell.beat { border-left:1px solid #999; }
-table.groove td.cell.hit { background:var(--hit); }
+table.groove td.cell.core { background:var(--hit); }
+table.groove td.cell.some { background:var(--hit); opacity:.32; }
 table.groove td.tick { text-align:left; color:var(--dim); font-variant-numeric:tabular-nums;
                        padding-bottom:3px; }
 .caveats { background:#fbf7ec; border:1px solid #e8dcc0; border-radius:6px; padding:14px 16px; }

@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage:
-#   scripts/run_local_demo.sh /absolute/or/relative/path/to/stems_folder
+# Submit a folder of stems to a running StemScribe server and wait for the
+# sheet. To run the same analysis without a server, use the CLI instead:
 #
-# Expected files in stems folder (any subset is allowed):
-# vocals.wav drums.wav bass.wav keys.wav guitar.wav other.wav
+#   cd backend && python -m app.cli <stems_folder> --title "Song Name"
+#
+# Usage:
+#   scripts/run_local_demo.sh [stems_folder] [song title]
 
-STEMS_DIR="${1:-sample_data}"
+STEMS_DIR="${1:-sample_data/carved-from-stone}"
+TITLE="${2:-$(basename "$STEMS_DIR" | tr '-' ' ')}"
 API_BASE="${API_BASE:-http://127.0.0.1:8000}"
 
 if [[ ! -d "$STEMS_DIR" ]]; then
@@ -15,35 +18,51 @@ if [[ ! -d "$STEMS_DIR" ]]; then
   exit 1
 fi
 
+# Take whatever audio is in the folder rather than looking for fixed names —
+# stems come out of Suno as "0 Lead Vocals.wav", "1 Drums.wav" and so on.
 files=()
-for name in vocals.wav drums.wav bass.wav keys.wav guitar.wav other.wav; do
-  if [[ -f "$STEMS_DIR/$name" ]]; then
-    files+=( -F "files=@$STEMS_DIR/$name" )
-  fi
-done
+while IFS= read -r -d '' path; do
+  files+=( -F "files=@${path}" )
+done < <(find "$STEMS_DIR" -maxdepth 1 -type f \
+  \( -iname '*.wav' -o -iname '*.flac' -o -iname '*.aiff' -o -iname '*.aif' \
+     -o -iname '*.ogg' -o -iname '*.mp3' -o -iname '*.m4a' \) -print0 | sort -z)
 
 if [[ ${#files[@]} -eq 0 ]]; then
-  echo "No supported WAV stems found in $STEMS_DIR" >&2
+  echo "No audio files found in $STEMS_DIR" >&2
   exit 1
 fi
 
-echo "Submitting job to $API_BASE/jobs ..."
-job_json=$(curl -sS -X POST "$API_BASE/jobs" "${files[@]}")
-job_id=$(python - <<'PY' "$job_json"
-import json,sys
-print(json.loads(sys.argv[1])["job_id"])
-PY
-)
+echo "Submitting ${#files[@]} stems as \"$TITLE\" to $API_BASE/jobs ..."
+job_id=$(curl -sS -X POST "$API_BASE/jobs" -F "title=$TITLE" "${files[@]}" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["job_id"])')
 
 echo "Job ID: $job_id"
 
-echo "\n== Job summary =="
-curl -sS "$API_BASE/jobs/$job_id" | python -m json.tool
+# Analysis runs in the background; a full song takes a couple of minutes.
+echo -n "Analysing"
+for _ in $(seq 1 300); do
+  status=$(curl -sS "$API_BASE/jobs/$job_id" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status","unknown"))')
+  case "$status" in
+    completed) echo " done."; break ;;
+    failed)    echo " failed."; curl -sS "$API_BASE/jobs/$job_id" | python3 -m json.tool; exit 1 ;;
+    *)         echo -n "."; sleep 2 ;;
+  esac
+done
 
-echo "\n== Preview manifest =="
-curl -sS "$API_BASE/jobs/$job_id/preview-manifest" | python -m json.tool
+if [[ "$status" != "completed" ]]; then
+  echo " timed out waiting for the job." >&2
+  exit 1
+fi
 
-echo "\n== Downloads list =="
-curl -sS "$API_BASE/jobs/$job_id/downloads" | python -m json.tool
+echo
+echo "== Summary =="
+curl -sS "$API_BASE/jobs/$job_id" | python3 -m json.tool
 
-echo "\nOutput files on disk under: jobs/$job_id"
+echo
+echo "== Files =="
+curl -sS "$API_BASE/jobs/$job_id/downloads" | python3 -m json.tool
+
+echo
+echo "Player sheet: $API_BASE/jobs/$job_id/sheet"
+echo "On disk:      backend/jobs/$job_id"
