@@ -1,12 +1,19 @@
-fastapi
-uvicorn
-pydantic
-numpy
-scipy
-librosa
-soundfile
-pretty_midi
-music21
-python-multipart
-pytest
-httpx
+# Pinned to versions that ship wheels for Python 3.10-3.13.
+# pretty_midi is deliberately absent: its setup.py fails to build against
+# modern setuptools, which made `pip install -r requirements.txt` fail
+# outright. app/utils/midi_io.py writes MIDI with mido instead.
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.27,<1.0
+pydantic>=2.6,<3.0
+python-multipart>=0.0.9
+
+numpy>=1.26,<3.0
+scipy>=1.11,<2.0
+librosa>=0.10.1,<0.12
+soundfile>=0.12,<1.0
+
+mido>=1.3,<2.0
+music21>=9.1,<11.0
+
+pytest>=8.0,<9.0
+httpx>=0.27,<1.0
