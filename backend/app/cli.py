@@ -1,6 +1,11 @@
 """Run a full analysis from the command line, without starting the server.
 
     python -m app.cli sample_data/carved-from-stone --title "Carved From Stone"
+
+Pass --separate to point it at a single mixed file (or a folder holding one)
+and have it recover the stems first:
+
+    python -m app.cli mix.wav --separate --title "Some Song"
 """
 
 import argparse
@@ -13,13 +18,29 @@ from app.config import settings
 from app.services.ingest import collect_local_stems
 from app.services.pipeline import run_analysis
 from app.services.preview_manifest import build_preview_manifest
+from app.services.separate import SeparationLicenseError, SeparationUnavailable, prepare_job_stems
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Transcribe a folder of stems into a player sheet.")
-    parser.add_argument("folder", type=Path, help="Folder containing the stem audio files")
+    parser.add_argument("input", type=Path, help="Folder of stems, or a single mix file with --separate")
     parser.add_argument("--title", default=None, help="Song title for the sheet")
     parser.add_argument("--job-id", default=None, help="Reuse a fixed job id instead of a timestamp")
+    parser.add_argument(
+        "--separate",
+        action="store_true",
+        help="Treat the input as one mix and recover stems from it before analysing",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="audio-separator model key or filename (default: the commercial-safe pick)",
+    )
+    parser.add_argument(
+        "--allow-noncommercial-model",
+        action="store_true",
+        help="Permit a non-commercial separation model (personal/research use only)",
+    )
     parser.add_argument(
         "--out",
         type=Path,
@@ -28,16 +49,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not args.folder.is_dir():
-        print(f"Not a folder: {args.folder}", file=sys.stderr)
+    if args.input.is_dir():
+        stems = collect_local_stems(args.input)
+        source_label = str(args.input)
+        default_title_from = args.input.name
+    elif args.input.is_file():
+        stems = [args.input]
+        source_label = str(args.input)
+        default_title_from = args.input.stem
+    else:
+        print(f"Not a file or folder: {args.input}", file=sys.stderr)
         return 2
 
-    stems = collect_local_stems(args.folder)
     if not stems:
-        print(f"No audio files found in {args.folder}", file=sys.stderr)
+        print(f"No audio files found in {args.input}", file=sys.stderr)
         return 2
 
-    title = args.title or args.folder.name.replace("-", " ").title()
+    title = args.title or default_title_from.replace("-", " ").replace("_", " ").title()
     job_id = args.job_id or f"cli-{int(time.time())}"
     job_dir = args.out or (settings.jobs_root / job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -53,9 +81,25 @@ def main(argv: list[str] | None = None) -> int:
             shutil.copy2(stem, target)
         copied.append(target)
 
-    print(f"Analysing {len(copied)} stems from {args.folder} …")
+    recovered_note = None
+    if args.separate:
+        print(f"Separating {source_label} into stems …")
+        try:
+            copied, recovered_note = prepare_job_stems(
+                copied,
+                input_dir,
+                separate=True,
+                model=args.model,
+                allow_noncommercial=args.allow_noncommercial_model,
+            )
+        except (SeparationUnavailable, SeparationLicenseError, ValueError) as exc:
+            print(f"Separation could not run: {exc}", file=sys.stderr)
+            return 2
+        print(f"  recovered {len(copied)} stems")
+
+    print(f"Analysing {len(copied)} stems from {source_label} …")
     started = time.time()
-    analysis = run_analysis(job_id, job_dir, copied, title)
+    analysis = run_analysis(job_id, job_dir, copied, title, recovered_note=recovered_note)
     build_preview_manifest(job_dir, analysis)
     elapsed = time.time() - started
 

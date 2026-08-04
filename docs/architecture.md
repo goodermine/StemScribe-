@@ -30,6 +30,13 @@ before it.
 `services/pipeline.py` runs the sequence. `routes/jobs.py` is a thin HTTP layer
 over it, and `app/cli.py` a thin command-line one.
 
+An optional **pre-stage** sits in front of stage 1: `services/separate.py`
+recovers stems from a single mix (`audio-separator`) when `--separate` is set,
+so a lone MP3 can feed the same pipeline. It is off by default — supplied stems
+are always preferred, because recovered ones carry separation artifacts. The
+separator's outputs are renamed to role-named files and enter classify exactly
+like uploaded stems, so nothing downstream changes.
+
 ## Why beat space
 
 Every note event carries a position in beats as well as in seconds. Detectors

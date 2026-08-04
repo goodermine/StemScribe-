@@ -40,8 +40,19 @@ from app.utils.audio import clear_audio_cache, load_mono
 from app.utils.notes import midi_to_note_name
 
 
-def run_analysis(job_id: str, job_dir: Path, saved: Sequence[Path], title: str) -> dict:
+def run_analysis(
+    job_id: str,
+    job_dir: Path,
+    saved: Sequence[Path],
+    title: str,
+    recovered_note: str | None = None,
+) -> dict:
     warnings: list[str] = []
+
+    # When the stems were recovered from a single mix rather than supplied, the
+    # sheet has to say so — the note explains what that costs the transcription.
+    if recovered_note:
+        warnings.append(recovered_note)
 
     stems_by_role, detected, output_keys = _organise_stems(saved)
     duration = _duration_of(saved)
@@ -168,6 +179,7 @@ def run_analysis(job_id: str, job_dir: Path, saved: Sequence[Path], title: str) 
         "title": title,
         "input_stems": [p.name for p in saved],
         "detected_stem_types": detected,
+        "stems_recovered": bool(recovered_note),
         "duration_sec": round(duration, 2),
         "key": key_info,
         "tempo": {

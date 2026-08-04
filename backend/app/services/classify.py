@@ -98,6 +98,38 @@ def classify_stem(filename: str) -> str:
     return "other"
 
 
+# audio-separator labels its outputs with a fixed vocabulary — (Vocals),
+# (Drums), (Bass), (Guitar), (Piano), (Other), and (Instrumental) on a 2-stem
+# model. These map onto roles the pipeline already treats differently; "piano"
+# is the keys role, and a lumped "instrumental" is the catch-all "other".
+SEPARATED_STEM_ROLES: dict[str, str] = {
+    "vocals": "vocals",
+    "vocal": "vocals",
+    "instrumental": "other",
+    "no vocals": "other",
+    "drums": "drums",
+    "drum": "drums",
+    "bass": "bass",
+    "guitar": "guitar",
+    "piano": "keys",
+    "keys": "keys",
+    "other": "other",
+}
+
+
+def role_from_separated_stem(label: str) -> str | None:
+    """Map a separator's stem label onto a StemScribe role.
+
+    Falls back to the filename classifier for anything outside the known
+    vocabulary, so an unexpected label still lands somewhere sensible rather
+    than being dropped.
+    """
+    key = " ".join(label.strip().lower().split())
+    if key in SEPARATED_STEM_ROLES:
+        return SEPARATED_STEM_ROLES[key]
+    return classify_stem(label)
+
+
 def lane_for_stem(stem_type: str) -> str:
     return LANE_MAP.get(stem_type, "harmony")
 
