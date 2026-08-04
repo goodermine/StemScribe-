@@ -87,4 +87,12 @@ reports what it was confident about and warns about what it was not. Roughly:
 
 There are no lyrics: nothing here does speech recognition.
 
-See `docs/` for the API, the architecture, and the full list of limitations.
+## Docs
+
+- `CLAUDE.md` — working notes: conventions, gotchas, and the tuning constants
+  that are judgement calls.
+- `docs/handoff.md` — where the work stands and what comes next.
+- `docs/api.md` — endpoints and the on-disk job layout.
+- `docs/architecture.md` — the pipeline, and why it makes the choices it does.
+- `docs/development.md` — setup, tests, adding an instrument role.
+- `docs/known-limitations.md` — what is reliable, approximate, and not attempted.
