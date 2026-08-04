@@ -4,9 +4,10 @@ Turns a song's stems into a sheet a musician can play from. Give it labelled
 stems, it works out tempo, key, structure and chords, transcribes each part, and
 produces a player sheet plus engraved notation.
 
-**It does not separate stems.** It takes stems that are already separated (Suno
-exports, or the output of a separation tool). Adding separation is the main open
-piece of work — see `docs/handoff.md`.
+**Stems come in already separated** (Suno exports, or a separation tool's
+output). It can also recover them from a single mix as an optional pre-stage —
+`--separate` on the CLI, `separate=true` on the job — but that is off by
+default, and real stems always beat recovered ones. See `docs/handoff.md`.
 
 ## Layout
 
@@ -29,6 +30,7 @@ backend/app/
     score_export.py       MusicXML + MIDI
     engrave.py            MusicXML → browser-readable pages
     chart.py              the player sheet
+    separate.py           optional pre-stage: mix → stems (audio-separator)
   utils/timing.py         BeatMap — seconds ↔ beats
 frontend/                 React + Vite, polls the background job
 sample_data/carved-from-stone/   seven real stems, the worked example
@@ -86,6 +88,14 @@ durations". This killed every export in the original code.
 
 **librosa returns tempo as an array** in ≥0.10. `_as_scalar()` in
 `beat_grid.py`.
+
+**Separation models are license-gated in code, not just in docs.** Several
+`audio-separator` checkpoints (including the common 6-stem `htdemucs_6s`) are
+CC-BY-NC. `separate.py`'s `resolve_model()` refuses any non-commercial model
+unless the caller passes `allow_noncommercial=True`, and the default is the
+verified MIT model. Do not add a checkpoint to the registry without recording
+its license, and do not loosen the gate. This mirrors the aaroncodex
+"never silently substitute" rule.
 
 ## Tuning constants — judgement calls, change with evidence
 

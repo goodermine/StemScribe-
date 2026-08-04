@@ -11,6 +11,11 @@ from app.schemas import JobCreateResponse
 from app.services.ingest import save_uploaded_stems
 from app.services.pipeline import run_analysis
 from app.services.preview_manifest import build_preview_manifest
+from app.services.separate import (
+    SeparationLicenseError,
+    SeparationUnavailable,
+    prepare_job_stems,
+)
 from app.services.storage import read_json, resolve_within, write_json
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -29,18 +34,31 @@ def _set_status(job_dir: Path, status: str, **extra) -> None:
     )
 
 
-def _process(job_id: str, job_dir: Path, saved: list[Path], title: str) -> None:
+def _process(job_id: str, job_dir: Path, saved: list[Path], title: str, separate: bool) -> None:
     """Run the analysis, recording the outcome either way.
 
     Transcribing a full song takes minutes, so this runs in the background and
     the caller polls. A failure has to land in the status file — otherwise the
-    job simply never finishes and the client waits forever.
+    job simply never finishes and the client waits forever. Separation, when
+    asked for, is a pre-stage: it turns the one uploaded mix into stems, which
+    the analysis then treats like any others.
     """
     try:
+        if separate:
+            _set_status(job_dir, "processing", stage="separating")
+            stems, recovered_note = prepare_job_stems(
+                saved, job_dir / "input", separate=True
+            )
+        else:
+            stems, recovered_note = saved, None
         _set_status(job_dir, "processing", stage="analysing")
-        analysis = run_analysis(job_id, job_dir, saved, title)
+        analysis = run_analysis(job_id, job_dir, stems, title, recovered_note=recovered_note)
         build_preview_manifest(job_dir, analysis)
         _set_status(job_dir, "completed", warnings=analysis.get("warnings", []))
+    except (SeparationUnavailable, SeparationLicenseError, ValueError) as exc:
+        # Expected, explainable failures — record the message plainly so the UI
+        # can show it, without a traceback that reads like a crash.
+        _set_status(job_dir, "failed", error=str(exc))
     except Exception as exc:
         _set_status(
             job_dir,
@@ -55,6 +73,7 @@ def create_job(
     background: BackgroundTasks,
     files: list[UploadFile] = File(...),
     title: str = Form(default="Untitled"),
+    separate: bool = Form(default=False),
 ) -> JobCreateResponse:
     job_id = str(uuid4())
     job_dir = settings.jobs_root / job_id
@@ -65,7 +84,7 @@ def create_job(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     _set_status(job_dir, "queued")
-    background.add_task(_process, job_id, job_dir, saved, title)
+    background.add_task(_process, job_id, job_dir, saved, title, separate)
     return JobCreateResponse(job_id=job_id, status="queued")
 
 

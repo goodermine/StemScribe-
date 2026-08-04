@@ -51,13 +51,68 @@ away at export so nothing lined up with the audio.
 Full detail is in the commit messages and in the PR description. `CLAUDE.md`
 carries the parts that are still live constraints.
 
-## The next piece of work: stem separation
+## Stem separation — implemented as an optional pre-stage
 
-**This is the main gap.** StemScribe cannot pull stems out of a song — it needs
-them already separated. That limits it to Suno exports and multitracks. Making
-it accept any MP3 is the obvious next step.
+**Status: built and unit-tested; not yet run end to end against a real model.**
+This was the main gap — StemScribe could only read stems that were already
+separated. It now has a `--separate` path that recovers stems from a single mix
+first, following the aaroncodex implementation the previous handoff pointed at.
 
-### What was established
+### What landed
+
+- `services/separate.py` — the pre-stage. A license-gated model registry, an
+  `available()` backend check, `resolve_model()` that refuses a non-commercial
+  model unless the caller opts in, `separate_mix()` that runs `audio-separator`
+  and renames its outputs to role-named stem files, and `prepare_job_stems()`
+  that both callers share.
+- `classify.py` — `role_from_separated_stem()` maps the separator's labels
+  (Vocals / Drums / Bass / Guitar / Piano / Other / Instrumental) onto roles.
+- `routes/jobs.py` — a `separate` form flag; the pre-stage runs in the
+  background job before analysis. `cli.py` — `--separate`, `--model`,
+  `--allow-noncommercial-model`, and it now accepts a single file, not just a
+  folder.
+- `pipeline.run_analysis` takes a `recovered_note`; when stems were recovered
+  the sheet carries a warning saying so and why it matters.
+- `tests/test_separate.py` — a fake separator exercises the role map, the
+  license gate and the orchestration without downloading a model.
+
+### The licensing decision, carried over from aaroncodex
+
+aaroncodex deliberately rejected Demucs and the UVR defaults because their
+weights are **CC-BY-NC (non-commercial)**, and standardised on the MIT Mel-Band
+RoFormer via `audio-separator`. `separate.py` keeps that rule as code: the
+default model is commercial-cleared, and `htdemucs_6s` (the obvious 6-stem
+option) is wired but gated behind `allow_noncommercial=True`.
+
+### What is left — the one real open question
+
+The **target is 6 commercial-safe stems**, but no 6-stem checkpoint in the
+audio-separator registry is *confirmed* commercial-cleared, so the shipping
+default falls back to the verified MIT **2-stem** model (vocals + everything
+else). That is legally safe but only partly useful: a lumped "instrumental"
+stem does not give the pipeline separate drums or bass. Closing this needs
+someone to confirm a 6-stem RoFormer's license on the target machine, then set
+`COMMERCIAL_6STEM` in `separate.py` — the code path is already there.
+
+Also still to do, all needing the real backend a headless session can't run:
+run one mix end to end, record the model SHA-256 (as aaroncodex's
+`docs/models/separation-model.md` prescribes), and measure CPU wall-clock.
+
+### What was established (background)
+
+- **Demucs** (Meta) splits a mix into vocals / drums / bass / other, and
+  `htdemucs_6s` adds guitar and piano — but its weights are **CC-BY-NC**.
+- **RoFormer** is better and is the current state of the art. `BS-RoFormer` and
+  `Mel-Band RoFormer` beat Demucs on quality. A `BS-RoFormer SW` variant does
+  six stems — vocals, drums, bass, guitar, piano, other — which maps directly
+  onto roles `classify.py` already treats differently.
+- Mel-band projection improves vocals, drums and "other" over plain band-split,
+  but is **worse for bass**, where band-split handles low frequencies better.
+  The strongest setups ensemble different models per stem.
+- [`python-audio-separator`](https://github.com/nomadkaraoke/python-audio-separator)
+  (`pip install audio-separator`) is the clean programmatic route: Python API,
+  supports RoFormer/MDXC/Demucs/VR, downloads checkpoints itself, falls back to
+  CPU.
 
 - **Demucs** (Meta, MIT) splits a mix into vocals / drums / bass / other, and
   `htdemucs_6s` adds guitar and piano.
@@ -98,17 +153,19 @@ recovered rather than supplied, since artifacts degrade transcription.
   classifier in particular is sensitive to.
 
 Recommendation: keep separation optional. Use real stems when they exist,
-separate only a mix.
+separate only a mix. `separate=False` is the default on every path.
 
-### Unresolved
+### Resolved: the aaroncodex implementation was read and ported
 
-There is a repository `goodermine/aaroncodex` that reportedly does RoFormer
-separation and is worth reading before building anything. **It could not be
-reached from this session** — it was not attached as a source, and `add_repo`
-returned `MCP error -32003: MCP tool call requires approval` with no prompt
-arriving. Start the next session with both `goodermine/stemscribe-` and
-`goodermine/aaroncodex` attached, and read that first — porting a working
-implementation beats writing a new one.
+`goodermine/aaroncodex` was reachable this session. The separation code lives in
+`voxpolish/src/voxpolish/stages/separation.py` (the `audio-separator` +
+Mel-Band RoFormer pattern) with the licensing rationale in
+`docs/models/separation-model.md` and `docs/separation-model-swap-plan.md`. That
+pattern — the pinned model, the "never silently substitute" guard, the
+`available()` check — is what `services/separate.py` is ported from. The one
+difference: aaroncodex needs a 2-stem vocal/instrumental split for its scoring;
+StemScribe wants per-instrument stems, so this port generalises the same shape
+to a multi-stem, license-gated registry.
 
 ## Known weak spots
 

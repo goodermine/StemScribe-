@@ -22,3 +22,9 @@ httpx>=0.27,<1.0
 # Optional: adds PDF output alongside the engraved HTML. Needs a system cairo
 # library, so it is not required — without it, print the HTML from a browser.
 # pip install cairosvg pypdf
+
+# Optional: stem separation for the --separate pre-stage, so a single mix can be
+# analysed without pre-separated stems. Pulls in a model download on first use.
+# Only a commercial-cleared (MIT) model runs by default — see
+# app/services/separate.py.
+# pip install audio-separator
