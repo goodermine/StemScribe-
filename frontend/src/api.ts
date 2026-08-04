@@ -1,12 +1,13 @@
-import type { JobCreateResponse, JobSummary } from './types/api'
+import type { JobCreateResponse, JobSummary, PreviewManifest } from './types/api'
 
-const BASE = 'http://localhost:8000'
+export const BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000'
 
-export async function createJob(files: File[]): Promise<JobCreateResponse> {
+export async function createJob(files: File[], title: string): Promise<JobCreateResponse> {
   const form = new FormData()
   files.forEach((f) => form.append('files', f))
+  form.append('title', title || 'Untitled')
   const r = await fetch(`${BASE}/jobs`, { method: 'POST', body: form })
-  if (!r.ok) throw new Error('Failed to create job')
+  if (!r.ok) throw new Error((await r.json().catch(() => null))?.detail ?? 'Failed to start the job')
   return r.json()
 }
 
@@ -16,8 +17,16 @@ export async function fetchJob(jobId: string): Promise<JobSummary> {
   return r.json()
 }
 
-export async function fetchPreviewManifest(jobId: string): Promise<any> {
+export async function fetchPreviewManifest(jobId: string): Promise<PreviewManifest> {
   const r = await fetch(`${BASE}/jobs/${jobId}/preview-manifest`)
-  if (!r.ok) throw new Error('Failed to fetch preview')
+  if (!r.ok) throw new Error('Preview not ready')
   return r.json()
+}
+
+export function fileUrl(jobId: string, path: string): string {
+  return `${BASE}/jobs/${jobId}/files/${path}`
+}
+
+export function sheetUrl(jobId: string): string {
+  return `${BASE}/jobs/${jobId}/sheet`
 }

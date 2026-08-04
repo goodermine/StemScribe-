@@ -1,27 +1,61 @@
-from datetime import datetime
+import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse
 
 from app.config import settings
 from app.schemas import JobCreateResponse
-from app.services.arrange import stem_output_dir
-from app.services.beat_grid import estimate_beat_grid
-from app.services.classify import classify_stem, lane_for_stem
 from app.services.ingest import save_uploaded_stems
-from app.services.melody_extract import extract_melody_events, pick_lead_stem
+from app.services.pipeline import run_analysis
 from app.services.preview_manifest import build_preview_manifest
-from app.services.score_export import export_midi, export_musicxml
-from app.services.stem_transcribe import transcribe_pitched_stem
-from app.services.storage import write_json
+from app.services.storage import read_json, resolve_within, write_json
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
+DOWNLOADABLE_SUFFIXES = {".mid", ".musicxml", ".json", ".html", ".md", ".pdf"}
+
+
+def _status_path(job_dir: Path) -> Path:
+    return job_dir / "status.json"
+
+
+def _set_status(job_dir: Path, status: str, **extra) -> None:
+    write_json(
+        _status_path(job_dir),
+        {"status": status, "updated_at": datetime.now(timezone.utc).isoformat(), **extra},
+    )
+
+
+def _process(job_id: str, job_dir: Path, saved: list[Path], title: str) -> None:
+    """Run the analysis, recording the outcome either way.
+
+    Transcribing a full song takes minutes, so this runs in the background and
+    the caller polls. A failure has to land in the status file — otherwise the
+    job simply never finishes and the client waits forever.
+    """
+    try:
+        _set_status(job_dir, "processing", stage="analysing")
+        analysis = run_analysis(job_id, job_dir, saved, title)
+        build_preview_manifest(job_dir, analysis)
+        _set_status(job_dir, "completed", warnings=analysis.get("warnings", []))
+    except Exception as exc:
+        _set_status(
+            job_dir,
+            "failed",
+            error=f"{type(exc).__name__}: {exc}",
+            traceback=traceback.format_exc(limit=8),
+        )
+
 
 @router.post("", response_model=JobCreateResponse)
-def create_job(files: list[UploadFile] = File(...)) -> JobCreateResponse:
+def create_job(
+    background: BackgroundTasks,
+    files: list[UploadFile] = File(...),
+    title: str = Form(default="Untitled"),
+) -> JobCreateResponse:
     job_id = str(uuid4())
     job_dir = settings.jobs_root / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -30,84 +64,46 @@ def create_job(files: list[UploadFile] = File(...)) -> JobCreateResponse:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    stem_map: dict[str, Path] = {}
-    detected: dict[str, str] = {}
-    for p in saved:
-        stem_type = classify_stem(p.name)
-        detected[p.name] = stem_type
-        stem_map[stem_type] = p
-
-    tempo_info = estimate_beat_grid(saved, stem_map.get("drums"))
-    write_json(job_dir / "tempo.json", tempo_info)
-
-    lead_choice = pick_lead_stem(stem_map)
-    warnings: list[str] = []
-    confidence_summary = {"tempo": tempo_info["confidence"]}
-
-    if lead_choice:
-        lead_name, lead_path = lead_choice
-        lead_notes = extract_melody_events(lead_name, lead_path, tempo_info, settings.quantization_division)
-        lead_dir = job_dir / "lead_melody"
-        write_json(lead_dir / "lead_melody_notes.json", lead_notes)
-        export_midi(lead_notes, lead_dir / "lead_melody.mid", program=0)
-        export_musicxml(lead_notes, lead_dir / "lead_melody.musicxml", bpm=tempo_info["bpm"])
-        confidence_summary["lead_melody"] = 0.75
-    else:
-        warnings.append("No viable lead stem found; lead melody is unavailable.")
-
-    for stem_type, stem_path in stem_map.items():
-        lane = lane_for_stem(stem_type)
-        out_dir = stem_output_dir(job_dir, stem_type)
-        metadata = {
-            "stem_name": stem_type,
-            "lane": lane,
-            "source_filename": stem_path.name,
-            "transcription_method": "pyin" if lane == "melody" else "piptrack",
-            "quantization_settings": {"division": settings.quantization_division},
-            "confidence": 0.6,
-            "warnings": [],
-        }
-        if lane == "rhythm":
-            write_json(out_dir / "rhythm.json", {"onsets": tempo_info["beat_times"]})
-        else:
-            notes = transcribe_pitched_stem(stem_type, stem_path, tempo_info, settings.quantization_division)
-            write_json(out_dir / "notes.json", notes)
-            export_midi(notes, out_dir / "part.mid", program=32 if stem_type == "bass" else 0)
-            export_musicxml(
-                notes,
-                out_dir / "part.musicxml",
-                bpm=tempo_info["bpm"],
-                time_signature=tempo_info["time_signature_guess"],
-                use_bass_clef=stem_type == "bass",
-            )
-        write_json(out_dir / "metadata.json", metadata)
-
-    analysis = {
-        "job_id": job_id,
-        "input_stems": [p.name for p in saved],
-        "detected_stem_types": detected,
-        "warnings": warnings,
-        "confidence_summary": confidence_summary,
-        "created_at": datetime.utcnow().isoformat(),
-    }
-    write_json(job_dir / "analysis.json", analysis)
-    build_preview_manifest(job_dir, tempo_info)
-    return JobCreateResponse(job_id=job_id, status="completed")
+    _set_status(job_dir, "queued")
+    background.add_task(_process, job_id, job_dir, saved, title)
+    return JobCreateResponse(job_id=job_id, status="queued")
 
 
 @router.get("/{job_id}")
 def get_job(job_id: str) -> dict:
     job_dir = settings.jobs_root / job_id
-    analysis = job_dir / "analysis.json"
-    tempo = job_dir / "tempo.json"
-    if not analysis.exists():
+    if not job_dir.exists():
         raise HTTPException(status_code=404, detail="Job not found")
-    import json
 
-    data = json.loads(analysis.read_text())
-    data["tempo"] = json.loads(tempo.read_text()) if tempo.exists() else None
-    data["status"] = "completed"
+    status_file = _status_path(job_dir)
+    status = read_json(status_file) if status_file.exists() else {"status": "unknown"}
+
+    analysis_file = job_dir / "analysis.json"
+    if not analysis_file.exists():
+        return {"job_id": job_id, **status}
+
+    data = read_json(analysis_file)
+    data["status"] = status.get("status", "completed")
+    tempo_file = job_dir / "tempo.json"
+    data["tempo_detail"] = read_json(tempo_file) if tempo_file.exists() else None
     return data
+
+
+@router.get("/{job_id}/chart")
+def get_chart(job_id: str) -> dict:
+    chart_file = settings.jobs_root / job_id / "chart.json"
+    if not chart_file.exists():
+        raise HTTPException(status_code=404, detail="Chart not ready")
+    return read_json(chart_file)
+
+
+@router.get("/{job_id}/sheet", response_class=HTMLResponse)
+def get_sheet(job_id: str) -> HTMLResponse:
+    """The printable player sheet, served directly for viewing."""
+    sheet = settings.jobs_root / job_id / "player_sheet.html"
+    if not sheet.exists():
+        raise HTTPException(status_code=404, detail="Player sheet not ready")
+    return HTMLResponse(sheet.read_text(encoding="utf-8"))
 
 
 @router.get("/{job_id}/downloads")
@@ -115,7 +111,11 @@ def list_downloads(job_id: str) -> dict:
     job_dir = settings.jobs_root / job_id
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="Job not found")
-    files = [p.relative_to(job_dir).as_posix() for p in job_dir.rglob("*") if p.is_file() and p.suffix in {".mid", ".musicxml", ".json"}]
+    files = sorted(
+        p.relative_to(job_dir).as_posix()
+        for p in job_dir.rglob("*")
+        if p.is_file() and p.suffix in DOWNLOADABLE_SUFFIXES
+    )
     return {"job_id": job_id, "files": files}
 
 
@@ -124,14 +124,13 @@ def get_preview_manifest(job_id: str) -> dict:
     manifest = settings.jobs_root / job_id / "merged" / "preview_manifest.json"
     if not manifest.exists():
         raise HTTPException(status_code=404, detail="Manifest not found")
-    import json
-
-    return json.loads(manifest.read_text())
+    return read_json(manifest)
 
 
 @router.get("/{job_id}/files/{path:path}")
 def get_file(job_id: str, path: str):
-    file_path = settings.jobs_root / job_id / path
-    if not file_path.exists() or not file_path.is_file():
+    job_dir = settings.jobs_root / job_id
+    file_path = resolve_within(job_dir, path)
+    if file_path is None or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path)

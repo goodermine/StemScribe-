@@ -1,109 +1,79 @@
 # Development
 
-## 1) Install dependencies
+## Setup
 
-### Backend
+```bash
+cd backend && pip install -r requirements.txt
+cd ../frontend && npm install
+```
+
+Every dependency ships wheels for Python 3.10–3.13, so no compiler is needed.
+
+Scores are engraved to browser-readable HTML out of the box. For PDF output as
+well:
+
+```bash
+pip install cairosvg pypdf
+```
+
+That needs a system cairo library, which is why it is optional rather than in
+`requirements.txt`. Without it, every score still gets an HTML page that prints
+to PDF from a browser.
+
+## Running a job without the server
+
 ```bash
 cd backend
-pip install -r requirements.txt
+python -m app.cli ../sample_data/carved-from-stone --title "Carved From Stone"
 ```
 
-### Frontend
+Options: `--title`, `--out` (write the job somewhere specific), `--job-id`.
+
+It prints the key, tempo, structure and per-part note counts, plus any
+warnings, and tells you where the sheet was written.
+
+## Running the app
+
 ```bash
-cd frontend
-npm install
+cd backend && uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+cd frontend && npm run dev     # http://127.0.0.1:5173
 ```
 
-## 2) Start the backend API
+The frontend reads `VITE_API_BASE` if you need to point it elsewhere; it
+defaults to `http://127.0.0.1:8000`. The backend allows CORS from the Vite dev
+server only.
 
-From repo root:
+## Tests
+
 ```bash
-cd backend
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+cd backend && pytest -q
 ```
 
-Health check:
-```bash
-curl http://127.0.0.1:8000/health
-```
+The suite runs against a synthetic song built in `tests/conftest.py` — four
+bars of C–Am–F–G at 120 BPM with drums, bass, keys and a vocal line, generated
+as real audio. Because its key, tempo and progression are known in advance, the
+assertions are about musical correctness (this key, this tempo, this
+progression, a plausible number of notes) rather than about whether files were
+written.
 
-## 3) Start the frontend UI
+When you change an analysis stage, that fixture is the regression guard. If a
+tuning change makes the synthetic progression come out wrong, it is wrong.
 
-In a separate terminal:
-```bash
-cd frontend
-npm run dev
-```
+## Adding an instrument role
 
-Open: `http://127.0.0.1:5173`
+1. Add its filename tokens to `ROLE_TOKENS` in `services/classify.py`.
+2. Add a `LANE_MAP` entry — `melody`, `harmony`, `bass` or `rhythm`.
+3. Add an `InstrumentProfile`: pitch range, MIDI program, clef, whether it is
+   polyphonic, and whether it should inform chord detection. A lead vocal
+   should not; a rhythm guitar should.
+4. Add a case to `test_classify.py`.
 
-## 4) Run a full job from labeled stem files
+## Performance
 
-You can use either the UI upload flow or CLI curl.
+A seven-stem, three-and-a-half-minute song takes about 90 seconds. Most of that
+is pYIN on the vocal and bass stems. Decoded audio is cached across stages
+(`utils/audio.py`), since several stages read the same stems.
 
-### Option A: UI
-1. Open the frontend.
-2. Upload WAV stems (any subset):
-   - `vocals.wav`
-   - `drums.wav`
-   - `bass.wav`
-   - `keys.wav`
-   - `guitar.wav`
-   - `other.wav`
-3. Click **Process Stems**.
-4. The job page will show tempo, lead melody path, downloadable files, and MusicXML preview.
-
-### Option B: CLI helper script
-From repo root:
-```bash
-scripts/run_local_demo.sh /path/to/folder/containing/stems
-```
-
-If omitted, the script defaults to `sample_data/`.
-
-## 5) How to fetch every requested output file
-
-Assume `JOB_ID=<your_job_id>`.
-
-### Core analysis outputs
-```bash
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/analysis.json
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/tempo.json
-```
-
-### Lead melody outputs (always attempted)
-```bash
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/lead_melody/lead_melody_notes.json
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/lead_melody/lead_melody.mid
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/lead_melody/lead_melody.musicxml
-```
-
-### Per-stem outputs
-For each available stem folder under `stems/<stem_name>/`:
-- pitched stems (`vocals`, `bass`, `keys`, `guitar`, `other`) expose:
-  - `notes.json`
-  - `part.mid`
-  - `part.musicxml`
-  - `metadata.json`
-- rhythm stems (`drums`) expose:
-  - `rhythm.json`
-  - `metadata.json`
-
-Example fetches:
-```bash
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/stems/vocals/notes.json
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/stems/vocals/part.mid
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/stems/vocals/part.musicxml
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/stems/vocals/metadata.json
-```
-
-### Browser preview manifest
-```bash
-curl -O http://127.0.0.1:8000/jobs/$JOB_ID/files/merged/preview_manifest.json
-```
-
-## 6) Run tests
-```bash
-cd backend
-pytest -q
-```
+Analysis runs at 22050 Hz for speed. Drums are the exception and load at 44100 —
+telling a hi-hat from a snare depends on energy above 8 kHz, which does not
+survive the lower rate.
