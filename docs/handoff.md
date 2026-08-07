@@ -84,15 +84,34 @@ RoFormer via `audio-separator`. `separate.py` keeps that rule as code: the
 default model is commercial-cleared, and `htdemucs_6s` (the obvious 6-stem
 option) is wired but gated behind `allow_noncommercial=True`.
 
-### What is left — the one real open question
+### What is left — and what was already ruled out
 
-The **target is 6 commercial-safe stems**, but no 6-stem checkpoint in the
-audio-separator registry is *confirmed* commercial-cleared, so the shipping
-default falls back to the verified MIT **2-stem** model (vocals + everything
-else). That is legally safe but only partly useful: a lumped "instrumental"
-stem does not give the pipeline separate drums or bass. Closing this needs
-someone to confirm a 6-stem RoFormer's license on the target machine, then set
-`COMMERCIAL_6STEM` in `separate.py` — the code path is already there.
+The **target is 6 commercial-safe stems**, and the shipping default falls back
+to the verified MIT **2-stem** model (vocals + everything else). That is legally
+safe but only partly useful: a lumped "instrumental" stem does not give the
+pipeline separate drums or bass.
+
+**Do not re-chase the two obvious 6-stem models — both were researched and
+rejected (Aug 2026):**
+
+- **`htdemucs_6s`** — the code is MIT but the pretrained weights are
+  **CC-BY-NC 4.0** (non-commercial). Wired and gated behind
+  `allow_noncommercial=True` for personal use only.
+- **BS-RoFormer "SW"** (jarredou, the current quality leader) — the `license:
+  mit` tags on these repos cover only the *code* (lucidrains/BS-RoFormer,
+  ZFTurbo MSST). The **weights were rehosted with no stated license and no
+  training provenance** — the rehoster confirmed they were not involved in
+  training. "No license" grants no rights and leaves the training data
+  unauditable, which is *worse* than a clean CC-BY-NC for a paid product. It is
+  in the registry as `roformer-sw-6s` with `commercial_ok=False`.
+  Evidence: `huggingface.co/elicwhite/bs-roformer-sw-6stem-onnx`.
+
+So there is currently **no commercially-cleared 6-stem checkpoint**. The
+commercial-safe frontier is lower stem count: the MIT 2-stem RoFormer default,
+or a 5-stem **Spleeter** (Deezer, MIT weights) if a guitar-less split is
+acceptable. Only set `COMMERCIAL_6STEM` in `separate.py` once a 6-stem model's
+*weights* license is verified commercial — reopen this only on new upstream
+licensing news, not by re-testing the two above.
 
 Also still to do, all needing the real backend a headless session can't run:
 run one mix end to end, record the model SHA-256 (as aaroncodex's
