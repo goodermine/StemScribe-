@@ -92,12 +92,38 @@ MODELS: dict[str, SeparationModel] = {
         commercial_ok=False,
         note="Demucs 6-source. Maps onto every role, but non-commercial weights.",
     ),
+    # The quality-leading 6-stem RoFormer ("SW", by jarredou). EVALUATED AND
+    # REJECTED as a commercial option (Aug 2026): the MIT tag on these repos
+    # covers the *code* (lucidrains/BS-RoFormer, ZFTurbo MSST) only. The weights
+    # were rehosted without a stated license, and the rehoster confirmed no
+    # training provenance — so "no license" (no grant of rights, unauditable
+    # training data), which for commercial use is worse than a clean CC-BY-NC.
+    # Kept here so nobody re-chases it; commercial_ok stays False. See
+    # docs/handoff.md, and huggingface.co/elicwhite/bs-roformer-sw-6stem-onnx.
+    "roformer-sw-6s": SeparationModel(
+        key="roformer-sw-6s",
+        filename="BS-Roformer-SW.yaml",
+        stems=("vocals", "drums", "bass", "guitar", "keys", "other"),
+        license="unlicensed (unknown provenance)",
+        commercial_ok=False,
+        note="BS-RoFormer SW 6-stem. Best quality, but weights carry no license.",
+    ),
 }
 
 # The default model is chosen at call time by default_model(): a commercial
 # 6-stem checkpoint when one is confirmed, otherwise the MIT 2-stem fallback.
-# Leave this None until a 6-stem model's commercial license is verified on the
-# target machine and recorded in the registry above.
+#
+# Stays None deliberately. As of Aug 2026 there is NO commercially-cleared
+# 6-stem checkpoint to point it at — this was researched, not left unchecked:
+#   - htdemucs_6s      -> CC-BY-NC weights (non-commercial).
+#   - BS-RoFormer "SW" -> best quality, but weights rehosted with no license and
+#                         no training provenance (worse than CC-BY-NC for a paid
+#                         product: no grant of rights, unauditable data).
+# The commercial-safe frontier is therefore lower-stem-count (the MIT 2-stem
+# RoFormer default, or a 5-stem Spleeter if guitar-less is acceptable). Only set
+# this once a 6-stem model's *weights* license is verified commercial and its
+# registry entry has commercial_ok=True. Do not re-evaluate the two above
+# without new upstream licensing news.
 COMMERCIAL_6STEM: str | None = None
 
 
