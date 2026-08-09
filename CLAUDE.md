@@ -134,3 +134,9 @@ Machine transcription of a mixed recording is never note-perfect, and the sheet
 says so. Section *boundaries* are detected; section *names* (verse/chorus) are
 inferred from loudness and vocal presence and are labelled as a guide. Keep that
 distinction — do not present inferred labels as measured facts.
+
+## Memory
+
+Durable cross-session facts live in `memory/` — read `memory/MEMORY.md` at the
+start of a session. It carries the shared session memory (facts 021–029),
+mirrored across the sibling repos; the aaroncodex copy is primary.
